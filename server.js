@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const sites = require('./sites');
 
 const app = express();
 app.use(cors());
@@ -20,24 +19,30 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── Chat endpoint ─────────────────────────────────────────────────────────
 app.post('/chat', async (req, res) => {
-  const { message, siteId, history = [] } = req.body;
+  const { message, customPrompt, targetUrl, history = [] } = req.body;
 
-  if (!message || !siteId) {
-    return res.status(400).json({ error: 'Missing message or siteId' });
+  if (!message) {
+    return res.status(400).json({ error: 'Missing message' });
   }
 
-  const site = sites[siteId];
-  if (!site) {
-    return res.status(404).json({ error: `Site "${siteId}" not configured.` });
-  }
+  const systemInstruction = `You are a highly efficient assistant for ${targetUrl ? targetUrl : 'the provided business'}.
+${customPrompt ? `\nBUSINESS CONTEXT:\n${customPrompt}\n` : ''}
+
+CRITICAL CONSTRAINTS & TONE:
+- Be ultra-concise, professional, and punchy.
+- Segment complex replies with bullet points.
+- Eliminate all conversational filler (e.g., "Certainly," "I can help with that").
+- Ground your answers in reality: if a target website is provided, use Google Search to scrape and learn about its services, contacts, and features.
+- Never invent prices or packages—refer the user to contact options if information is unavailable.`;
 
   try {
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.0-flash',
-      systemInstruction: site.systemPrompt,
+      systemInstruction: systemInstruction,
+      tools: [{ googleSearch: {} }],
       generationConfig: {
         maxOutputTokens: 400,  // Keep replies concise
-        temperature: 0.7,
+        temperature: 0.5,
       }
     });
 
@@ -51,7 +56,7 @@ app.post('/chat', async (req, res) => {
     const result = await chat.sendMessage(message);
     const reply = result.response.text();
 
-    res.json({ reply, siteName: site.name });
+    res.json({ reply });
 
   } catch (err) {
     console.error('Gemini error:', err.message);
@@ -59,24 +64,13 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// ─── Site config endpoint (so widget can get theme/greeting) ───────────────
-app.get('/site-config/:siteId', (req, res) => {
-  const site = sites[req.params.siteId];
-  if (!site) return res.status(404).json({ error: 'Site not found' });
-  res.json({
-    name: site.name,
-    themeColor: site.themeColor,
-    greeting: site.greeting
-  });
-});
-
 // ─── Health check ──────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', sites: Object.keys(sites) });
+  res.json({ status: 'ok', dynamic_saas_mode: true });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n🤖 Chatbot backend running on port ${PORT}`);
-  console.log(`📋 Configured sites: ${Object.keys(sites).join(', ')}\n`);
+  console.log(`\n🤖 Chatbot SaaS backend running on port ${PORT}`);
+  console.log(`📋 Ready for dynamic website embeddings.\n`);
 });
